@@ -1,0 +1,3 @@
+[submodule "ledcontroller/TinyTouchLib"]
+	path = ledcontroller/TinyTouchLib
+	url = https://github.com/cpldcpu/TinyTouchLib
