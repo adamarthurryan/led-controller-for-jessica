@@ -13,34 +13,51 @@
 
 #include "common.h"
 
+//#define DEBUG_HUE
+
 void setupTimer();
 void loop();
 
 void hsvToRgb(float *r, float *g, float *b, float h, float s, float v);
-void updateHsvColor();
+void updateColor(float h);
+void updateBlack();
 
-void loadHsvPos(float *h, float *s, float *v);
-void saveHsvPos(float h, float s, float v);
+void loadABColors(float *hueA, float *hueB);
+void saveABColors(float hueA, float hueB);
 
 
 void delay(unsigned long);
 
+void resetMillis();
+
 
 //define the states for this program
 enum STATE {
+	ANIMATE,
 	SELECT,
-	HOLD
+	HOLD,
+	START
 };
 
 enum CHANNEL {
-	HUE,
-	SAT,
-	VAL
+	A = 0,
+	B = 1
 };
 
 //the current state
 enum STATE state;
 enum CHANNEL channel;
+
+unsigned long msHoldStart = 0;
+unsigned long msAnimateStart = 0;
+
+#define MSEC_HOLD_DELAY 2000
+#define MSEC_ANIMATE_CYCLE 24000
+#define MSEC_SOLID 4000
+#define MSEC_FADE 8000
+
+#define MSEC_RESET_THRESHOLD 50
+#define RESET_COUNT 70000
 
 #define RED 0
 #define GREEN 1
@@ -49,18 +66,12 @@ enum CHANNEL channel;
 #define BUTTON_PIN 3
 #define MSEC_BUTTON_DEBOUNCE 250
 
-#define HUE_STEP 0.005
-#define SAT_STEP 0.010
-#define VAL_STEP 0.010
+#define HUE_STEP 0.001
 #define STEP_DELAY 20
 
 
-//the current hue 
-float huePos;
-//the current saturation 
-float satPos;
-//the current color value (brightness)
-float valPos;
+//the current hue for channels A and B
+float hue[] = {0.0, 0.0};
 
 
 //the red, green and blue pins
@@ -77,26 +88,27 @@ byte EEMEM test;
 int main(void)
 {	
   //write enable port 0, 1, 2
-  //read enable port 3, 4, 5 (implicit)
   DDRB = (1<<PB0) | (1<<PB1) | (1<<PB2);
   
-  //disable pullups
-  //???
-  //MCUCR |= PUD;
+  //read enable port 3 
+  DDRB |= (0<<PB3);
   
+  //enable port 3 pullup
+  PORTB |= (1<<PB3);
+
   //configure the PWM and timer interrupts
   setupTimer();
 
 	//set the initial state
-	state=HOLD;
-	channel=HUE;
+	state=ANIMATE;
+	msAnimateStart = millis;
+	channel=A;
 	
 	//if the button is held down, reset the color
 	if (readPin(BUTTON_PIN)==false) {
-		huePos=0.001;
-		satPos=1;
-		valPos=1;
-		saveHsvPos(huePos, satPos, valPos);
+		hue[A]=0.001;
+		hue[B]=0.501;
+		saveABColors(hue[A], hue[B]);
 		
 		//wait until the button is released
 		do {
@@ -105,17 +117,15 @@ int main(void)
 	}
 	//otherwise load the saved color
 	else {
-		loadHsvPos(&huePos, &satPos, &valPos);
+		loadABColors(&hue[A], &hue[B]);
 	}
 
 	//set the initial color
-	updateHsvColor();	
+	//updateColor(hue[A]);	
 
+	//input handling loop
 	while(true) {
 		loop();
-		//writePin(pins[0], true);
-		//writePin(pins[1], true);
-		//writePin(pins[2], false);
 	}
 	
 	return 0;
@@ -129,70 +139,136 @@ void loop()
 	boolean button=readPin(BUTTON_PIN);
 	
 	//calculate the state transitions
-	//hold become select
-	if (state==HOLD && button==false) {
+	//hold or animate become select when the button is pressed
+	if ((state==HOLD || state==ANIMATE) && button==false) {
 		state=SELECT;
+		updateColor(hue[channel]);
 		delay(MSEC_BUTTON_DEBOUNCE);
 		return;
 	}
 	//select becomes hold for the next channel
 	else if (state==SELECT && button==true) {
 		//save the current channel positions
-		saveHsvPos(huePos, satPos, valPos);
+		saveABColors(hue[A], hue[B]);
 		state=HOLD;
+		
+		msHoldStart = millis;
+		
 		//choose the next channel
-		channel = HUE;
-		/*
 		switch (channel) {
-			case HUE:
-				channel=SAT;
+			case A:
+				channel=B;
 				break;
-			case SAT:
-				channel=VAL;
+			case B:
+				channel=A;
 				break;
-			case VAL:
-				channel=HUE;
 		}
-		*/
 		
 		delay(MSEC_BUTTON_DEBOUNCE);
 	}
 
 	//handle the select mode
-	if (state==SELECT && channel==HUE) {
+	else if (state==SELECT && button==false) {
 		//increment the hue
-		huePos+=HUE_STEP;
+		hue[channel]+=HUE_STEP;
 		//mod the hue by 1
-		if (huePos>1)
-			huePos-=floor(huePos);
+		if (hue[channel]>1)
+			hue[channel]-=floor(hue[channel]);
 	
-		updateHsvColor();
+		updateColor(hue[channel]);
 	}
-	//handle the saturation select mode
-	else if (state==SELECT && channel==SAT) {
-		//increment the saturation position
-		satPos+=SAT_STEP;
-		//mod the saturation position by 1
-		if (satPos>1)
-			satPos-=floor(satPos);
+	
+	//hold becomes animate after a delay, or when first starting
+	else if (state==START || (state==HOLD && (millis-msHoldStart > MSEC_HOLD_DELAY))) {
 		
-		//set the color
-		updateHsvColor();
-	}
-	//handle the value select mode
-	else if (state==SELECT && channel==VAL) {
-		//increment the saturation
-		valPos+=VAL_STEP;
-		//mod the saturation by 1
-		if (valPos>1)
-			valPos-=floor(valPos);
+		//flash the colors to indicate animate start
+		updateBlack();
+		delay(500);
+		updateColor(hue[A]);
+		delay(500);
+		updateBlack();
+		delay(500);
+		updateColor(hue[B]);
+		delay(500);
+		updateBlack();
+		delay(500);
 		
-
-		//set the color
-		updateHsvColor();
+		
+		state = ANIMATE;
+		msAnimateStart = millis;
 	}
+	
+	//handle animation
+	else if (state==ANIMATE) {				
+		//get the number of ms elapsed since the start of the current animation cycle
+		unsigned long msCycleElapsed = (millis - msAnimateStart) % MSEC_ANIMATE_CYCLE;
+		int cycleNumber = (millis-msAnimateStart)/MSEC_ANIMATE_CYCLE;
+		
+		//every so often, we'll reset the milliseconds counter
+		if (msCycleElapsed < MSEC_RESET_THRESHOLD && cycleNumber > RESET_COUNT) {
+			resetMillis();
+		}
+		
+		float hueStart;
+		float hueEnd;
+		
+		//first the animation fades from A to B and then from B to A
+		//each of these halves takes half of the animation cycle
+		if (msCycleElapsed < MSEC_ANIMATE_CYCLE/2) {
+			hueStart = hue[A];
+			hueEnd = hue[B];
+		}
+		else {
+			hueStart = hue[B];
+			hueEnd = hue[A];
+		}
+		
+		
+#ifdef DEBUG_HUE
+	hueEnd=0.4;
+	hueStart=0.91;
+#endif
+		
+		//get the ms elapsed since the start of the current half of the animation cycle
+		msCycleElapsed = msCycleElapsed % (MSEC_ANIMATE_CYCLE/2);
+		
+		//if we are still in the solid part of the cycle, just show the starting color
+		if (msCycleElapsed <= MSEC_SOLID)
+			updateColor(hueStart);
+			
+		//otherwise interpolate between the starting and ending color
+		else {
+			float interpolate = (float) (msCycleElapsed-MSEC_SOLID)/MSEC_FADE;
+			
+			
+			//we want to interpolate along the shortest distance
+			//so, if the start and end colors are more than half the number wheel distant
+			if (hueStart - hueEnd > 0.5)
+				hueEnd += 1.0;
+			else if (hueEnd - hueStart > 0.5)
+				hueStart += 1.0;
+			
+			
+			
+			float hue = hueEnd*interpolate + hueStart*(1.0-interpolate);
+			
+			if (hue >= 1.0)
+				hue -= 1.0;
+			
+			updateColor(hue);
+		}
+	}
+		
 	
 	delay(STEP_DELAY);
+}
+
+//reset the millisecond counter and notify attached devices
+void resetMillis() {
+	//!!! not currently implemented
+	msHoldStart -= millis;
+	msAnimateStart -= millis;
+	millis = 0;
 }
 
 //delay for the given number of millis
@@ -219,13 +295,6 @@ ISR(TIM0_COMPA_vect) {
 
 ISR(TIM1_OVF_vect) {
 	millis++;
-
-	//temp:
-/*	if (millis % 1000>500)
-		writePin(1,true);
-	else
-		writePin(1,false);
-*/
 }
 
 //setup the LED pwm timer
@@ -246,7 +315,7 @@ void setupTimer() {
 	// This is a 16-bit register?, so we have to do this with
 	// interrupts disabled to be safe.
 //	OCR0A = microsecondsToClockCycles(12);
-		OCR0A = 128; // = 6 us
+	OCR0A = 128; // = 6 us
 	
 	//set timer prescale to 32
 	//so timer rate is CK/32 = 250 kHz = 4 us (period) = 1024 us to overflow
@@ -259,32 +328,39 @@ void setupTimer() {
 }
 
 //the float values are scaled by 32000 and saved as 16 bit integers
-uint16_t EEMEM eeHuePos;
-uint16_t EEMEM eeSatPos;
-uint16_t EEMEM eeValPos;
+uint16_t EEMEM eeHueA;
+uint16_t EEMEM eeHueB;
 
 
 //loads the current hue, sat and val pos from eeprom
-void loadHsvPos(float *h, float *s, float *v) {
-	*h = ((float)eeprom_read_word(&eeHuePos)) /32000.0;
-	*s = ((float)eeprom_read_word(&eeSatPos)) /32000.0;
-	*v = ((float)eeprom_read_word(&eeValPos)) /32000.0;
+void loadABColors(float *ha, float *hb) {
+	*ha = ((float)eeprom_read_word(&eeHueA)) /32000.0;
+	*hb = ((float)eeprom_read_word(&eeHueB)) /32000.0;
 }
 
 //saves the current hue, sat and val pos to eeprom
-void saveHsvPos(float h, float s, float v) {
-	eeprom_write_word(&eeHuePos, (uint16_t) (h*32000.0));
-	eeprom_write_word(&eeSatPos, (uint16_t) (s*32000.0));
-	eeprom_write_word(&eeValPos, (uint16_t) (v*32000.0));
+void saveABColors(float ha, float hb) {
+	eeprom_write_word(&eeHueA, (uint16_t) (ha*32000.0));
+	eeprom_write_word(&eeHueB, (uint16_t) (hb*32000.0));
 }
 
-void updateHsvColor() {
-	float h=huePos;
-	//scale the saturation position by 2 and reflect around 1
-	float s=abs((satPos*2.0)-1.0);
-	//scale the saturation position by 2 and reflect around 1
-	float v=abs((valPos*2.0)-1.0);
 
+//sets the color to black
+void updateBlack() {
+	for (int i=0; i<3; i++)
+		duty[i]=0;
+}
+
+//sets the colour to the given hue
+void updateColor(float h) {
+
+	//scale the saturation position by 2 and reflect around 1
+	//s=abs((s*2.0)-1.0);
+	//scale the saturation position by 2 and reflect around 1
+	//v=abs((v*2.0)-1.0);
+
+	float s = 1;
+	float v = 1;
 
 	float r=0;
 	float g=0;
@@ -294,9 +370,11 @@ void updateHsvColor() {
 	hsvToRgb(&r, &g, &b, h, s, v);
 
 	//set the duty cycle
-  duty[RED]=r*255; 
+    duty[RED]=r*255; 
 	duty[GREEN]=g*255;
 	duty[BLUE]=b*255;
+
+    
 }
 
 //converts from the HSV color space to RGB
