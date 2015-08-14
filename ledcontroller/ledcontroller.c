@@ -25,6 +25,9 @@ void updateBlack();
 void loadABColors(float *hueA, float *hueB);
 void saveABColors(float hueA, float hueB);
 
+void doFullSpectrumAnimate();
+void doABAnimate();
+
 
 void delay(unsigned long);
 
@@ -52,9 +55,9 @@ unsigned long msHoldStart = 0;
 unsigned long msAnimateStart = 0;
 
 #define MSEC_HOLD_DELAY 2000
-#define MSEC_ANIMATE_CYCLE 24000
-#define MSEC_SOLID 4000
-#define MSEC_FADE 8000
+#define MSEC_ANIMATE_CYCLE 56000
+#define MSEC_SOLID 0
+#define MSEC_FADE 28000
 
 #define MSEC_RESET_THRESHOLD 50
 #define RESET_COUNT 70000
@@ -200,69 +203,93 @@ void loop()
 	
 	//handle animation
 	else if (state==ANIMATE) {				
-		//get the number of ms elapsed since the start of the current animation cycle
-		unsigned long msCycleElapsed = (millis - msAnimateStart) % MSEC_ANIMATE_CYCLE;
-		int cycleNumber = (millis-msAnimateStart)/MSEC_ANIMATE_CYCLE;
-		
-		//every so often, we'll reset the milliseconds counter
-		if (msCycleElapsed < MSEC_RESET_THRESHOLD && cycleNumber > RESET_COUNT) {
-			resetMillis();
-		}
-		
-		float hueStart;
-		float hueEnd;
-		
-		//first the animation fades from A to B and then from B to A
-		//each of these halves takes half of the animation cycle
-		if (msCycleElapsed < MSEC_ANIMATE_CYCLE/2) {
-			hueStart = hue[A];
-			hueEnd = hue[B];
-		}
-		else {
-			hueStart = hue[B];
-			hueEnd = hue[A];
-		}
-		
-		
-#ifdef DEBUG_HUE
-	hueEnd=0.4;
-	hueStart=0.91;
-#endif
-		
-		//get the ms elapsed since the start of the current half of the animation cycle
-		msCycleElapsed = msCycleElapsed % (MSEC_ANIMATE_CYCLE/2);
-		
-		//if we are still in the solid part of the cycle, just show the starting color
-		if (msCycleElapsed <= MSEC_SOLID)
-			updateColor(hueStart);
-			
-		//otherwise interpolate between the starting and ending color
-		else {
-			float interpolate = (float) (msCycleElapsed-MSEC_SOLID)/MSEC_FADE;
-			
-			
-			//we want to interpolate along the shortest distance
-			//so, if the start and end colors are more than half the number wheel distant
-			if (hueStart - hueEnd > 0.5)
-				hueEnd += 1.0;
-			else if (hueEnd - hueStart > 0.5)
-				hueStart += 1.0;
-			
-			
-			
-			float hue = hueEnd*interpolate + hueStart*(1.0-interpolate);
-			
-			if (hue >= 1.0)
-				hue -= 1.0;
-			
-			updateColor(hue);
-		}
+		doABAnimate();
 	}
 		
 	
 	delay(STEP_DELAY);
 }
 
+
+void doFullSpectrumAnimate() {
+	//get the number of ms elapsed since the start of the current animation cycle
+	unsigned long msCycleElapsed = (millis - msAnimateStart) % MSEC_ANIMATE_CYCLE;
+	int cycleNumber = (millis-msAnimateStart)/MSEC_ANIMATE_CYCLE;
+	
+	//every so often, we'll reset the milliseconds counter
+	if (msCycleElapsed < MSEC_RESET_THRESHOLD && cycleNumber > RESET_COUNT) {
+		resetMillis();
+	}
+	
+	float hue = (float)msCycleElapsed/MSEC_ANIMATE_CYCLE;
+	updateColor(hue);
+}
+
+void doABAnimate () {
+	//get the number of ms elapsed since the start of the current animation cycle
+	unsigned long msCycleElapsed = (millis - msAnimateStart) % MSEC_ANIMATE_CYCLE;
+	int cycleNumber = (millis-msAnimateStart)/MSEC_ANIMATE_CYCLE;
+		
+	//every so often, we'll reset the milliseconds counter
+	if (msCycleElapsed < MSEC_RESET_THRESHOLD && cycleNumber > RESET_COUNT) {
+		resetMillis();
+	}
+		
+	float hueStart;
+	float hueEnd;
+
+		
+	//first the animation fades from A to B and then from B to A
+	//each of these halves takes half of the animation cycle
+	if (msCycleElapsed < MSEC_ANIMATE_CYCLE/2) {
+		hueStart = hue[A];
+		hueEnd = hue[B];
+	}
+	else {
+		hueStart = hue[B];
+		hueEnd = hue[A];
+	}
+		
+		
+#ifdef DEBUG_HUE
+hueEnd=0.4;
+hueStart=0.91;
+#endif
+		
+	//get the ms elapsed since the start of the current half of the animation cycle
+	msCycleElapsed = msCycleElapsed % (MSEC_ANIMATE_CYCLE/2);
+		
+	//if we are still in the solid part of the cycle, just show the starting color
+	if (msCycleElapsed <= MSEC_SOLID)
+		updateColor(hueStart);
+			
+	//otherwise interpolate between the starting and ending color
+	else {
+		float interpolate = (float) (msCycleElapsed-MSEC_SOLID)/MSEC_FADE;
+			
+		//we want to interpolate along the shortest distance
+		//so, if the start and end colors are more than half the number wheel distant
+		if (hueStart - hueEnd > 0.5)
+			hueEnd += 1.0;
+		else if (hueEnd - hueStart > 0.5)
+			hueStart += 1.0;
+
+/*			
+		//we want to interpolate along the longest distance
+		//so, if the start and end colors are more than half the number wheel distant
+		if (hueStart - hueEnd < 0.5)
+		hueEnd += 1.0;
+		else if (hueEnd - hueStart > 0.5)
+		hueStart += 1.0;
+*/			
+		float hue = hueEnd*interpolate + hueStart*(1.0-interpolate);
+			
+		if (hue >= 1.0)
+			hue -= 1.0;
+			
+		updateColor(hue);
+	}
+}
 //reset the millisecond counter and notify attached devices
 void resetMillis() {
 	//!!! not currently implemented
@@ -290,7 +317,7 @@ ISR(TIM0_COMPA_vect) {
 			writePin(pins[i],false);	
 	}
 		
-	count+=4;	
+	count+=2;	
 }
 
 ISR(TIM1_OVF_vect) {
